@@ -80,6 +80,16 @@ namespace GridProxy
         public Uri remoteLoginUri = new Uri("https://login.agni.lindenlab.com/cgi-bin/login.cgi");
 
         /// <summary>
+        /// The URI of the splash screen
+        /// </summary>
+        public string splashScreenURI = string.Empty;
+
+        /// <summary>
+        /// Whether or not to use OpenSim style GridInfo
+        /// </summary>
+        public bool enableGridInfo = false;
+
+        /// <summary>
         /// construct a default proxy configuration with the specified userAgent and author
         /// </summary>
         /// <param name="userAgent">The user agent reported to the remote server</param>
@@ -107,6 +117,8 @@ namespace GridProxy
             argumentParsers["proxy-client-facing-address"] = new ArgumentParser(ParseClientFacingAddress);
             argumentParsers["proxy-remote-facing-address"] = new ArgumentParser(ParseRemoteFacingAddress);
             argumentParsers["proxy-remote-login-uri"] = new ArgumentParser(ParseRemoteLoginUri);
+            argumentParsers["splash-screen-uri"] = new ArgumentParser(ParseSplashScreenUri);
+            argumentParsers["grid-info"] = new ArgumentParser(ParseUseGridInfo);
 
             foreach (string arg in args)
             {
@@ -155,6 +167,8 @@ namespace GridProxy
             Console.WriteLine("  --log-whitelist=<file>              log packets listed in file, one name per line");
             Console.WriteLine("  --no-log-blacklist=<file>           don't log packets in file, one name per line");
             Console.WriteLine("  --output=<logfile>                  log Analyst output to a file");
+            Console.WriteLine("  --splash-screen-uri=<url>           splash screen to use on the viewer login if GridInfo is enabled");
+            Console.WriteLine("  --grid-info=<true/false>            enables OpenSim style GridInfo");
 
             Environment.Exit(1);
         }
@@ -177,6 +191,16 @@ namespace GridProxy
         private void ParseRemoteLoginUri(string value)
         {
             remoteLoginUri = new Uri(value);
+        }
+
+        private void ParseSplashScreenUri(string value)
+        {
+            splashScreenURI = value;
+        }
+
+        private void ParseUseGridInfo(string value)
+        {
+            enableGridInfo = value == "true";
         }
     }
 
@@ -589,6 +613,14 @@ namespace GridProxy
                 {
                     ProxyLogin(netStream, content);
                 }
+            }
+            else if (uri == "/get_grid_info" && proxyConfig.enableGridInfo)
+            {
+                HandleViewerAddGrid(netStream);
+            }
+            else if (uri.Length >= 7 ? uri.Substring(0, 7) == "/splash" : false && proxyConfig.splashScreenURI != string.Empty)
+            {
+                HandleSplashScreen(netStream);
             }
             else if (new Regex(@"^/https?://.*$").Match(uri).Success)
             {
@@ -1192,6 +1224,39 @@ namespace GridProxy
                     }
                 }
 
+            }
+        }
+
+        private void HandleSplashScreen(NetworkStream netStream)
+        {
+            lock (this)
+            {
+                StreamWriter writer = new StreamWriter(netStream);
+                writer.Write("HTTP/1.0 307 Temporary Redirect\r\n");
+                writer.Write("Location: " + proxyConfig.splashScreenURI + "\r\n");
+                writer.Close();
+            }
+        }
+
+        private void HandleViewerAddGrid(NetworkStream netStream)
+        {
+            lock (this)
+            {
+                StringBuilder sb = new StringBuilder();
+
+                sb.Append("<gridinfo>\n");
+                sb.AppendFormat("<{0}>{1}</{0}>\n", "gridname", "GridProxy");
+                sb.AppendFormat("<{0}>{1}</{0}>\n", "platform", "GridProxy");
+                sb.AppendFormat("<{0}>{1}</{0}>\n", "login", string.Format("http://{0}:{1}/", proxyConfig.clientFacingAddress, proxyConfig.loginPort));
+                sb.AppendFormat("<{0}>{1}</{0}>\n", "welcome", string.Format("http://{0}:{1}/splash", proxyConfig.clientFacingAddress, proxyConfig.loginPort));
+                sb.Append("</gridinfo>\n");
+
+                StreamWriter writer = new StreamWriter(netStream);
+                writer.Write("HTTP/1.0 200 OK\r\n");
+                writer.Write("Content-type: application/llsd+xml\r\n");
+                writer.Write("\r\n");
+                writer.Write(sb.ToString());
+                writer.Close();
             }
         }
 
